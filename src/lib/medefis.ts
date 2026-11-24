@@ -173,29 +173,30 @@ function pickLaterExpiry(a: Date | null, b: Date | null): Date | null {
 
 /* --------------------------- Credential storage ----------------------------- */
 
-export async function saveCredentials(username: string, password: string) {
+export async function saveCredentials(username: string, password: string, entryUrl?: string) {
   const usernameCipher = encrypt(username)
   const passwordCipher = encrypt(password)
   const existing = await db.medefisCredential.findFirst()
   if (existing) {
     await db.medefisCredential.update({
       where: { id: existing.id },
-      data: { username, usernameCipher, passwordCipher, lastError: null, updatedAt: new Date() },
+      data: { username, usernameCipher, passwordCipher, entryUrl: entryUrl ?? existing.entryUrl, lastError: null, updatedAt: new Date() },
     })
   } else {
     await db.medefisCredential.create({
-      data: { username, usernameCipher, passwordCipher },
+      data: { username, usernameCipher, passwordCipher, entryUrl },
     })
   }
 }
 
-export async function getStoredCredentials(): Promise<{ username: string; password: string } | null> {
+export async function getStoredCredentials(): Promise<{ username: string; password: string; entryUrl: string | null } | null> {
   const cred = await db.medefisCredential.findFirst()
   if (!cred) return null
   try {
     return {
       username: decrypt(cred.usernameCipher),
       password: decrypt(cred.passwordCipher),
+      entryUrl: cred.entryUrl ?? null,
     }
   } catch {
     return null

@@ -56,6 +56,8 @@ model MedefisCredential {
   passwordCipher String
   // Encrypted blob containing username too (for re-login), base64.
   usernameCipher String
+  // The Medefis vendor portal entry URL (generates the SSO signin token).
+  entryUrl       String?
   lastVerifiedAt DateTime?
   lastError      String?
   createdAt      DateTime @default(now())

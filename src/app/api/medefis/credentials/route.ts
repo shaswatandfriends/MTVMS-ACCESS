@@ -26,27 +26,28 @@ export async function GET() {
   return NextResponse.json({
     stored: !!creds,
     username: creds?.username ?? null,
+    entryUrl: creds?.entryUrl ?? null,
     status,
   })
 }
 
-/** POST /api/medefis/credentials -> save (or replace) Medefis credentials */
+/** POST /api/medefis/credentials -> save (or replace) Medefis credentials + entry URL */
 export async function POST(req: Request) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
 
-  const { username, password } = await req.json().catch(() => ({} as any))
+  const { username, password, entryUrl } = await req.json().catch(() => ({} as any))
   if (!username || !password) {
     return NextResponse.json({ error: 'username and password are required.' }, { status: 400 })
   }
 
-  await saveCredentials(username, password)
+  await saveCredentials(username, password, entryUrl || undefined)
   const ip = await getClientIp()
   await logActivity({
     actor: admin.username,
     role: 'admin',
     action: 'medefis.credentials.save',
-    detail: `Stored Medefis credentials for ${username}`,
+    detail: `Stored Medefis credentials for ${username}${entryUrl ? ' + entry URL' : ''}`,
     ip,
   })
   return NextResponse.json({ ok: true, username })

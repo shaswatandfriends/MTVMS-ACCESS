@@ -30,11 +30,13 @@ import {
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
+import { HeadlessLoginPanel } from '@/components/admin/headless-login-panel'
 import type { MedefisSessionStatus } from '@/lib/types'
 
 export function CredentialsPanel() {
   const [status, setStatus] = useState<MedefisSessionStatus | null>(null)
   const [storedUsername, setStoredUsername] = useState<string | null>(null)
+  const [storedEntryUrl, setStoredEntryUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -45,6 +47,7 @@ export function CredentialsPanel() {
       const data = await res.json()
       setStatus(data.status ?? null)
       setStoredUsername(data.username ?? null)
+      setStoredEntryUrl(data.entryUrl ?? null)
     } finally {
       setLoading(false)
     }
@@ -188,6 +191,14 @@ export function CredentialsPanel() {
         </CardContent>
       </Card>
 
+      <HeadlessLoginPanel
+        hasCredentials={!!storedUsername}
+        entryUrl={storedEntryUrl}
+        busy={busy}
+        setBusy={setBusy}
+        onSession={load}
+      />
+
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Credentials card */}
         <Card>
@@ -218,6 +229,7 @@ export function CredentialsPanel() {
 
             <SaveCredentialsDialog
               currentUsername={storedUsername}
+              currentEntryUrl={storedEntryUrl}
               busy={busy}
               setBusy={setBusy}
               onSaved={load}
@@ -307,11 +319,13 @@ export function CredentialsPanel() {
 
 function SaveCredentialsDialog({
   currentUsername,
+  currentEntryUrl,
   busy,
   setBusy,
   onSaved,
 }: {
   currentUsername: string | null
+  currentEntryUrl: string | null
   busy: string | null
   setBusy: (v: string | null) => void
   onSaved: () => void
@@ -319,14 +333,16 @@ function SaveCredentialsDialog({
   const [open, setOpen] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [entryUrl, setEntryUrl] = useState('')
   const [show, setShow] = useState(false)
 
   useEffect(() => {
     if (open) {
       setUsername(currentUsername ?? '')
       setPassword('')
+      setEntryUrl(currentEntryUrl ?? '')
     }
-  }, [open, currentUsername])
+  }, [open, currentUsername, currentEntryUrl])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -339,7 +355,7 @@ function SaveCredentialsDialog({
       const res = await fetch('/api/medefis/credentials', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, entryUrl }),
       })
       if (res.ok) {
         toast.success('Medefis credentials saved (encrypted).')
@@ -371,6 +387,20 @@ function SaveCredentialsDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="mf-entry">Medefis entry URL (vendor portal link)</Label>
+            <Input
+              id="mf-entry"
+              value={entryUrl}
+              onChange={(e) => setEntryUrl(e.target.value)}
+              disabled={busy === 'save-creds'}
+              placeholder="https://vms.medefis5.com/"
+            />
+            <p className="text-xs text-slate-400">
+              The link you normally click to open Medefis. It redirects to the SSO login with a
+              valid signin token (don&apos;t paste the bare identity login URL).
+            </p>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="mf-user">Medefis username</Label>
             <Input
