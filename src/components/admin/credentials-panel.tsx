@@ -10,7 +10,6 @@ import {
   ClipboardPaste,
   Trash2,
   RefreshCw,
-  ExternalLink,
   Eye,
   EyeOff,
 } from 'lucide-react'
@@ -262,26 +261,31 @@ export function CredentialsPanel() {
           </CardHeader>
           <CardContent className="space-y-3">
             <ManualPasteDialog busy={busy} setBusy={setBusy} onSaved={load} />
+            <div className="rounded-md bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200">
+              <strong>Important:</strong> Do NOT open{' '}
+              <span className="font-mono">identity.medefis5.com/identity/login</span> directly —
+              it needs a <span className="font-mono">?signin=…</span> token or you&apos;ll get an
+              &ldquo;error determining which application&rdquo; page. Always start from your
+              Medefis vendor/app link so it can generate the token.
+            </div>
             <ol className="space-y-2 rounded-md bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
               <li>
-                <strong>1.</strong> Open{' '}
-                <a
-                  href="https://identity.medefis5.com/identity/login"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-emerald-700 underline"
-                >
-                  identity.medefis5.com <ExternalLink className="h-3 w-3" />
-                </a>{' '}
-                and sign in normally.
+                <strong>1.</strong> Open your <strong>Medefis vendor portal link</strong> (the one
+                your company gave you). It redirects to the SSO login with a valid{' '}
+                <span className="font-mono">signin</span> token. Sign in normally.
               </li>
               <li>
-                <strong>2.</strong> After landing on the Medefis app, open DevTools →
-                Application → Cookies (or Network → click any request → Headers).
+                <strong>2.</strong> After landing on the Medefis <strong>app dashboard</strong>,
+                open DevTools → <strong>Network</strong> tab → refresh the page → click the main
+                document request.
               </li>
               <li>
-                <strong>3.</strong> Copy the full <span className="font-mono">Cookie:</span>{' '}
-                request header value and the app URL, then paste them here.
+                <strong>3.</strong> In <strong>Request Headers</strong>, find the{' '}
+                <span className="font-mono">Cookie:</span> row and copy its full value.
+              </li>
+              <li>
+                <strong>4.</strong> Paste the cookie header and the app URL (from your address bar)
+                into the dialog above.
               </li>
             </ol>
           </CardContent>
