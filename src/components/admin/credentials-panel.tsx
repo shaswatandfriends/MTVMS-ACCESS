@@ -136,6 +136,16 @@ export function CredentialsPanel() {
                 ) : (
                   'Establish a session so employees can access Medefis.'
                 )}
+                {status?.valid && (
+                  <> ·{' '}
+                    {status.hasTokens ? (
+                      <span className="text-emerald-700">OIDC tokens captured</span>
+                    ) : (
+                      <span className="text-amber-600">cookies only (no tokens — employees may see login)</span>
+                    )}
+                    {status.hasCookies ? ' · cookies captured' : ''}
+                  </>
+                )}
                 {status?.expiresAt && (
                   <> · expires {new Date(status.expiresAt).toLocaleString()}</>
                 )}
@@ -248,15 +258,15 @@ export function CredentialsPanel() {
           </CardContent>
         </Card>
 
-        {/* Manual cookie paste */}
+        {/* Manual session paste */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <ClipboardPaste className="h-4 w-4 text-emerald-600" /> Manual cookie paste
+              <ClipboardPaste className="h-4 w-4 text-emerald-600" /> Paste Medefis session
             </CardTitle>
             <CardDescription>
-              Reliable fallback for SSO/SAML flows. Paste the cookie header from your browser
-              after logging in to Medefis yourself.
+              Capture the OIDC tokens (and Incapsula cookies) from your logged-in Medefis tab
+              and paste them here. This is the reliable path for Medefis&apos;s SSO/OIDC login.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -430,12 +440,17 @@ function ManualPasteDialog({
 }) {
   const [open, setOpen] = useState(false)
   const [cookies, setCookies] = useState('')
-  const [appBaseUrl, setAppBaseUrl] = useState('https://medefis5.com')
+  const [tokens, setTokens] = useState('')
+  const [appBaseUrl, setAppBaseUrl] = useState('https://vms.medefis5.com')
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!cookies || !appBaseUrl) {
-      toast.error('Cookie header and app URL are required.')
+    if (!appBaseUrl) {
+      toast.error('App URL is required.')
+      return
+    }
+    if (!cookies && !tokens) {
+      toast.error('Provide a cookie header and/or the storage tokens blob.')
       return
     }
     setBusy('paste')
@@ -443,16 +458,21 @@ function ManualPasteDialog({
       const res = await fetch('/api/medefis/session', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cookies, appBaseUrl }),
+        body: JSON.stringify({ cookies, appBaseUrl, tokens }),
       })
       const data = await res.json()
       if (data.ok) {
-        toast.success('Manual session stored. Employees can now access Medefis.')
+        toast.success(
+          tokens
+            ? 'Medefis session stored with OIDC tokens. Employees can now access Medefis.'
+            : 'Manual session stored. Employees can now access Medefis.',
+        )
         setOpen(false)
         setCookies('')
+        setTokens('')
         onSaved()
       } else {
-        toast.error(data.error || 'Could not store cookies.')
+        toast.error(data.error || 'Could not store session.')
       }
     } finally {
       setBusy(null)
@@ -463,15 +483,15 @@ function ManualPasteDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button className="w-full">
-          <ClipboardPaste className="mr-2 h-4 w-4" /> Paste cookies manually
+          <ClipboardPaste className="mr-2 h-4 w-4" /> Paste Medefis session
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Paste Medefis session cookies</DialogTitle>
+          <DialogTitle>Paste Medefis session</DialogTitle>
           <DialogDescription>
-            Copy the full <span className="font-mono">Cookie</span> request header from your
-            browser after logging in to Medefis.
+            Medefis uses OIDC tokens stored in browser storage (not just cookies).
+            Capture both from your logged-in Medefis tab and paste them here.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
@@ -481,21 +501,59 @@ function ManualPasteDialog({
               id="paste-app"
               value={appBaseUrl}
               onChange={(e) => setAppBaseUrl(e.target.value)}
-              placeholder="https://medefis5.com"
+              placeholder="https://vms.medefis5.com"
               disabled={busy === 'paste'}
             />
+            <p className="text-xs text-slate-400">
+              The URL in your address bar after logging into the Medefis app.
+            </p>
           </div>
+
           <div className="space-y-2">
-            <Label htmlFor="paste-cookies">Cookie header</Label>
+            <Label htmlFor="paste-cookies">Cookie header (optional)</Label>
             <Textarea
               id="paste-cookies"
               value={cookies}
               onChange={(e) => setCookies(e.target.value)}
-              placeholder="name1=value1; name2=value2; ..."
-              className="min-h-[8rem] font-mono text-xs"
+              placeholder="visid_incap_...=...; incap_ses_...=...; ..."
+              className="min-h-[5rem] font-mono text-xs"
               disabled={busy === 'paste'}
             />
+            <p className="text-xs text-slate-400">
+              DevTools → Network → click the main document request → Request Headers → copy the{' '}
+              <span className="font-mono">cookie</span> row. (Incapsula bot-protection cookies.)
+            </p>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="paste-tokens" className="flex items-center gap-2">
+              Storage tokens (required for Medefis)
+              <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">OIDC</Badge>
+            </Label>
+            <Textarea
+              id="paste-tokens"
+              value={tokens}
+              onChange={(e) => setTokens(e.target.value)}
+              placeholder={'{"localStorage":{...},"sessionStorage":{"oidc.user:https://identity.medefis5.com/identity:vms.usermanager":"{...access_token...}"}}'}
+              className="min-h-[9rem] font-mono text-xs"
+              disabled={busy === 'paste'}
+            />
+            <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
+              <div className="mb-1 font-medium text-slate-700">How to capture this:</div>
+              <ol className="list-decimal space-y-1 pl-4">
+                <li>
+                  On the <strong>Medefis app page</strong> (vms.medefis5.com, logged in), press{' '}
+                  <span className="font-mono">F12</span> → <strong>Console</strong> tab.
+                </li>
+                <li>
+                  Paste this command and press Enter:
+                  <pre className="mt-1 overflow-x-auto rounded bg-slate-900 p-2 font-mono text-[11px] text-emerald-300">{`copy(JSON.stringify({localStorage: {...localStorage}, sessionStorage: {...sessionStorage}}))`}</pre>
+                </li>
+                <li>The JSON blob is now on your clipboard — paste it into the box above.</li>
+              </ol>
+            </div>
+          </div>
+
           <DialogFooter>
             <Button
               type="button"

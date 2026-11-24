@@ -62,11 +62,15 @@ model MedefisCredential {
   updatedAt      DateTime @updatedAt
 }
 
-/// Captured Medefis session cookies (single active record).
+/// Captured Medefis session (single active record).
 model MedefisSession {
   id           String   @id @default(cuid())
   // JSON array of {name, value, domain, path} cookies, encrypted at rest.
   cookiesBlob  String
+  // Encrypted JSON of {localStorage:{...}, sessionStorage:{...}} captured from
+  // the admin's browser. Medefis is an OIDC SPA that stores its access_token
+  // here, so the proxy hydrates these into the proxied page before the SPA boots.
+  tokensBlob   String?
   // Base URL of the Medefis application after login redirect.
   appBaseUrl   String
   // Whether the session is currently considered valid.

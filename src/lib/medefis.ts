@@ -63,19 +63,41 @@ export async function saveSession(
   cookies: MedefisCookie[],
   appBaseUrl: string,
   valid = true,
+  tokens?: { localStorage: Record<string, string>; sessionStorage: Record<string, string> } | null,
 ) {
   const blob = encrypt(JSON.stringify(cookies))
+  const tokensBlob = tokens ? encrypt(JSON.stringify(tokens)) : null
   const existing = await db.medefisSession.findFirst()
-  const expiresAt = computeExpiry(cookies)
+  // Prefer the OIDC token expiry when tokens are present (more accurate).
+  const tokenExpiry = tokens ? computeTokenExpiry(tokens) : null
+  const cookieExpiry = computeExpiry(cookies)
+  const expiresAt = pickLaterExpiry(tokenExpiry, cookieExpiry)
   if (existing) {
     await db.medefisSession.update({
       where: { id: existing.id },
-      data: { cookiesBlob: blob, appBaseUrl, valid, expiresAt, updatedAt: new Date() },
+      data: { cookiesBlob: blob, tokensBlob, appBaseUrl, valid, expiresAt, updatedAt: new Date() },
     })
   } else {
     await db.medefisSession.create({
-      data: { cookiesBlob: blob, appBaseUrl, valid, expiresAt },
+      data: { cookiesBlob: blob, tokensBlob, appBaseUrl, valid, expiresAt },
     })
+  }
+}
+
+export interface StoredTokens {
+  localStorage: Record<string, string>
+  sessionStorage: Record<string, string>
+}
+
+export async function getStoredTokens(): Promise<StoredTokens | null> {
+  const session = await db.medefisSession.findFirst({
+    orderBy: { updatedAt: 'desc' },
+  })
+  if (!session?.tokensBlob) return null
+  try {
+    return JSON.parse(decrypt(session.tokensBlob)) as StoredTokens
+  } catch {
+    return null
   }
 }
 
@@ -92,6 +114,9 @@ export async function markSessionInvalid() {
 export async function getSessionStatus() {
   const session = await db.medefisSession.findFirst({ orderBy: { updatedAt: 'desc' } })
   const cred = await db.medefisCredential.findFirst()
+  const tokens = session?.tokensBlob
+    ? await getStoredTokens().catch(() => null)
+    : null
   return {
     hasCredentials: !!cred,
     hasSession: !!session && session.valid,
@@ -100,7 +125,9 @@ export async function getSessionStatus() {
     expiresAt: session?.expiresAt ?? null,
     updatedAt: session?.updatedAt ?? null,
     lastVerifiedAt: cred?.lastVerifiedAt ?? null,
-    lastError: cred?.lastError ?? session?.appBaseUrl ? null : null,
+    lastError: cred?.lastError ?? null,
+    hasTokens: !!tokens,
+    hasCookies: !!session,
   }
 }
 
@@ -118,6 +145,30 @@ function computeExpiry(cookies: MedefisCookie[]): Date | null {
     return new Date(Date.now() + 8 * 60 * 60 * 1000)
   }
   return new Date(latest)
+}
+
+/**
+ * Find the OIDC user object inside captured storage tokens and return its
+ * `expires_at` (a unix-seconds timestamp). Returns null if not found.
+ */
+function computeTokenExpiry(tokens: StoredTokens): Date | null {
+  try {
+    const ss = tokens.sessionStorage || {}
+    const oidcKey = Object.keys(ss).find((k) => k.startsWith('oidc.user'))
+    if (!oidcKey) return null
+    const oidc = JSON.parse(ss[oidcKey])
+    if (typeof oidc.expires_at === 'number') {
+      return new Date(oidc.expires_at * 1000)
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+function pickLaterExpiry(a: Date | null, b: Date | null): Date | null {
+  if (a && b) return a.getTime() > b.getTime() ? a : b
+  return a ?? b
 }
 
 /* --------------------------- Credential storage ----------------------------- */
@@ -477,36 +528,71 @@ function deriveAppBaseUrl(finalUrl: string, html: string): string {
 /* --------------------------- Manual cookie paste ---------------------------- */
 
 /**
- * Admin can paste a cookie header string copied from their own browser
- * DevTools after logging into Medefis. This is the reliable path for
- * SSO/SAML providers that resist headless automation.
+ * Admin can paste a cookie header string AND the localStorage/sessionStorage
+ * blob copied from their browser DevTools after logging into Medefis. The
+ * storage blob is essential for OIDC-based SPAs (like Medefis) that keep the
+ * access_token in sessionStorage rather than in cookies.
+ *
+ * Capture it by running this in the browser console on the Medefis app page:
+ *   copy(JSON.stringify({localStorage: {...localStorage}, sessionStorage: {...sessionStorage}}))
  */
 export async function saveManualCookies(
   cookieHeader: string,
   appBaseUrl: string,
+  tokensJson?: string,
 ): Promise<LoginResult> {
   const cookies: MedefisCookie[] = []
-  const parts = cookieHeader.split(';').map((p) => p.trim()).filter(Boolean)
-  let host = DEFAULT_APP_HOST
-  try {
-    host = new URL(appBaseUrl).hostname
-  } catch {
-    /* keep default */
+  if (cookieHeader && cookieHeader.trim()) {
+    const parts = cookieHeader.split(';').map((p) => p.trim()).filter(Boolean)
+    for (const part of parts) {
+      const eq = part.indexOf('=')
+      if (eq === -1) continue
+      cookies.push({
+        name: part.slice(0, eq).trim(),
+        value: part.slice(eq + 1).trim(),
+        domain: '',
+        path: '/',
+      })
+    }
   }
-  for (const part of parts) {
-    const eq = part.indexOf('=')
-    if (eq === -1) continue
-    cookies.push({
-      name: part.slice(0, eq).trim(),
-      value: part.slice(eq + 1).trim(),
-      domain: host,
-      path: '/',
-    })
+
+  // Parse the optional storage tokens blob.
+  let tokens: StoredTokens | null = null
+  if (tokensJson && tokensJson.trim()) {
+    try {
+      const parsed = JSON.parse(tokensJson)
+      if (parsed && typeof parsed === 'object') {
+        tokens = {
+          localStorage: parsed.localStorage && typeof parsed.localStorage === 'object' ? parsed.localStorage : {},
+          sessionStorage: parsed.sessionStorage && typeof parsed.sessionStorage === 'object' ? parsed.sessionStorage : {},
+        }
+      }
+    } catch {
+      return { success: false, error: 'Tokens JSON is invalid. Make sure you copied the exact output of the copy(...) command.' }
+    }
   }
-  if (!cookies.length) {
-    return { success: false, error: 'No valid cookies detected in the pasted header.' }
+
+  if (!cookies.length && !tokens) {
+    return { success: false, error: 'Provide at least a cookie header or a storage tokens blob.' }
   }
-  await saveSession(cookies, appBaseUrl, true)
+
+  // Validate that the tokens actually contain an OIDC user object, if provided.
+  if (tokens) {
+    const oidcKey = Object.keys(tokens.sessionStorage).find((k) => k.startsWith('oidc.user'))
+    if (!oidcKey) {
+      return { success: false, error: 'Tokens blob has no oidc.user key in sessionStorage. Make sure you copied it from a logged-in Medefis app page (vms.medefis5.com), not the login page.' }
+    }
+    try {
+      const oidc = JSON.parse(tokens.sessionStorage[oidcKey])
+      if (!oidc.access_token) {
+        return { success: false, error: 'The captured OIDC user object has no access_token.' }
+      }
+    } catch {
+      return { success: false, error: 'The oidc.user value is malformed.' }
+    }
+  }
+
+  await saveSession(cookies, appBaseUrl, true, tokens)
   await setCredentialError(null)
   return { success: true, cookies, appBaseUrl }
 }
@@ -527,6 +613,19 @@ const UPSTREAM_HOSTS = new Set([
   'vendor.medefis5.com',
   'vms.medefis5.com',
 ])
+
+/** App hosts (where the SPA runs) vs the identity/login host. */
+const APP_HOSTS = new Set([
+  DEFAULT_APP_HOST,
+  'www.medefis5.com',
+  'app.medefis5.com',
+  'vendor.medefis5.com',
+  'vms.medefis5.com',
+])
+
+function isAppHost(host: string): boolean {
+  return APP_HOSTS.has(host)
+}
 
 /**
  * Resolve the host-qualified proxy prefix for a given upstream host.
@@ -559,7 +658,7 @@ export function rewriteUpstreamUrl(rawUrl: string): string | null {
  * Rewrite URLs inside HTML/CSS/JS payloads so resources load through
  * the proxy. Also strips framing defenses so the result can be iframed.
  */
-export function rewriteHtml(html: string): string {
+export function rewriteHtml(html: string, tokens?: StoredTokens | null): string {
   for (const host of UPSTREAM_HOSTS) {
     const re = new RegExp(
       `https?://${host.replace(/\./g, '\\.')}`,
@@ -570,9 +669,29 @@ export function rewriteHtml(html: string): string {
     const re2 = new RegExp(`//${host.replace(/\./g, '\\.')}`, 'g')
     html = html.replace(re2, proxyPrefixForHost(host))
   }
-  // Inject a tiny bootstrap script that patches client-side navigation
-  // (window.location assignments, fetch/XHR) to stay within the proxy.
-  const inject = `<script>(function(){
+
+  // --- Token hydration script ---
+  // Must run BEFORE any SPA script so localStorage/sessionStorage are
+  // populated when the Medefis app boots and looks for its OIDC user object.
+  let hydrationInject = ''
+  if (tokens) {
+    // Escape `</` so the JSON can't prematurely close the script tag, and
+    // escape HTML-significant sequences to be safe inside <script>.
+    const safeJson = JSON.stringify(tokens)
+      .replace(/<\//g, '<\\/')
+      .replace(/<!--/g, '<\\!--')
+    hydrationInject = `<script>(function(){
+  try {
+    var T = ${safeJson};
+    if (T && T.localStorage) { Object.keys(T.localStorage).forEach(function(k){ try { window.localStorage.setItem(k, T.localStorage[k]); } catch(e){} }); }
+    if (T && T.sessionStorage) { Object.keys(T.sessionStorage).forEach(function(k){ try { window.sessionStorage.setItem(k, T.sessionStorage[k]); } catch(e){} }); }
+  } catch(e) { if (window.console) console.warn('[gateway] token hydration failed', e); }
+})();</script>`
+  }
+
+  // --- Fetch/XHR rewrite script ---
+  // Patches client-side requests so they stay within the proxy origin.
+  const navInject = `<script>(function(){
     try {
       var PREFIX='/api/medefis/proxy/';
       var HOSTS=['identity.medefis5.com','medefis5.com','www.medefis5.com','app.medefis5.com','vendor.medefis5.com','vms.medefis5.com'];
@@ -596,17 +715,31 @@ export function rewriteHtml(html: string): string {
       if(XHR){ var origOpen=XHR.prototype.open;
         XHR.prototype.open=function(m,u){ return origOpen.call(this,m,rewrite(u)); };
       }
-      // block top-level navigation out of the iframe
-      var origAssign=window.location.assign?window.location.assign.bind(window.location):null;
-      // No-op: links already rewritten in HTML.
+      // Keep top-level navigation inside the iframe so the SPA doesn't
+      // escape to the real Medefis origin.
+      try {
+        var origAssign = window.location.assign, origReplace = window.location.replace;
+        // No-op override: links already rewritten in HTML.
+      } catch(e){}
     } catch(e){ }
   })();</script>`
-  if (/<\/head>/i.test(html)) {
-    html = html.replace(/<\/head>/i, inject + '</head>')
-  } else if (/<\/body>/i.test(html)) {
-    html = html.replace(/<\/body>/i, inject + '</body>')
+
+  // Inject hydration FIRST (right after <head>), and the nav patcher
+  // near the end of head / body.
+  if (/<head[^>]*>/i.test(html)) {
+    html = html.replace(/(<head[^>]*>)/i, '$1' + hydrationInject)
+  } else if (/<html[^>]*>/i.test(html)) {
+    html = html.replace(/(<html[^>]*>)/i, '$1<head>' + hydrationInject + '</head>')
   } else {
-    html = inject + html
+    html = hydrationInject + html
+  }
+
+  if (/<\/head>/i.test(html)) {
+    html = html.replace(/<\/head>/i, navInject + '</head>')
+  } else if (/<\/body>/i.test(html)) {
+    html = html.replace(/<\/body>/i, navInject + '</body>')
+  } else {
+    html = navInject + html
   }
   return html
 }
@@ -668,7 +801,8 @@ export async function proxyRequest(
 
   const res = await fetch(targetUrl, init)
 
-  // Capture any refreshed cookies so the session stays alive.
+  // Capture any refreshed cookies so the session stays alive. CRITICAL: pass
+  // the existing tokens through so the OIDC blob is NOT clobbered to null.
   const setCookies = res.headers.getSetCookie?.() ?? []
   if (setCookies.length) {
     const parsed = parseSetCookies(setCookies).map((c) => ({
@@ -677,7 +811,8 @@ export async function proxyRequest(
     }))
     const merged = mergeCookies(cookies, parsed)
     const appBaseUrl = (await getStoredAppBaseUrl()) ?? `https://${host}`
-    await saveSession(merged, appBaseUrl, true)
+    const existingTokens = await getStoredTokens()
+    await saveSession(merged, appBaseUrl, true, existingTokens)
   }
 
   const outHeaders: Record<string, string> = {}
@@ -697,7 +832,11 @@ export async function proxyRequest(
 
   let finalBody = buf
   if (ct.includes('text/html') || ct.includes('application/xhtml')) {
-    finalBody = Buffer.from(rewriteHtml(buf.toString('utf8')), 'utf8')
+    // Only HTML documents for the app host get token hydration — this is the
+    // SPA shell that reads sessionStorage on boot. Other hosts (identity) and
+    // non-HTML responses don't need it.
+    const tokens = isAppHost(host) ? await getStoredTokens() : null
+    finalBody = Buffer.from(rewriteHtml(buf.toString('utf8'), tokens), 'utf8')
   } else if (ct.includes('text/css') || ct.includes('javascript') || ct.includes('text/javascript')) {
     let text = buf.toString('utf8')
     for (const host2 of UPSTREAM_HOSTS) {

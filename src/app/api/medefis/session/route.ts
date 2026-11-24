@@ -30,27 +30,32 @@ export async function GET() {
 
 /**
  * POST /api/medefis/session -> manual cookie paste (admin only)
- * Body: { cookies: string, appBaseUrl: string }
- * Reliable fallback for SSO/SAML providers that resist headless login.
+ * Body: { cookies: string, appBaseUrl: string, tokens?: string }
+ * `tokens` is the JSON blob from `copy(JSON.stringify({localStorage:{...localStorage}, sessionStorage:{...sessionStorage}}))`
+ * and is required for OIDC-based SPAs (like Medefis) that store the
+ * access_token in sessionStorage rather than in cookies.
  */
 export async function POST(req: Request) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ error: 'Admin access required.' }, { status: 403 })
 
-  const { cookies, appBaseUrl } = await req.json().catch(() => ({} as any))
-  if (!cookies || !appBaseUrl) {
-    return NextResponse.json({ error: 'cookies and appBaseUrl are required.' }, { status: 400 })
+  const { cookies, appBaseUrl, tokens } = await req.json().catch(() => ({} as any))
+  if (!appBaseUrl) {
+    return NextResponse.json({ error: 'appBaseUrl is required.' }, { status: 400 })
+  }
+  if (!cookies && !tokens) {
+    return NextResponse.json({ error: 'Provide a cookie header and/or a tokens blob.' }, { status: 400 })
   }
 
-  const result = await saveManualCookies(cookies, appBaseUrl)
+  const result = await saveManualCookies(cookies ?? '', appBaseUrl, tokens)
   const ip = await getClientIp()
   await logActivity({
     actor: admin.username,
     role: 'admin',
     action: 'medefis.session.paste',
     detail: result.success
-      ? `Pasted manual cookies for ${result.appBaseUrl}`
-      : `Manual cookie paste failed: ${result.error}`,
+      ? `Pasted Medefis session for ${result.appBaseUrl}${tokens ? ' (with OIDC tokens)' : ''}`
+      : `Manual session paste failed: ${result.error}`,
     ip,
   })
 

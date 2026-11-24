@@ -26,6 +26,8 @@ export interface MedefisSessionStatus {
   updatedAt: string | null
   lastVerifiedAt: string | null
   lastError: string | null
+  hasTokens: boolean
+  hasCookies: boolean
 }
 
 export interface ActivityEntry {
