@@ -1,0 +1,93 @@
+// Parent Control System for Medefis VMS
+// Admin owns Medefis credentials; employees access through a proxied session.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Administrator of the parent control system (owns Medefis credentials).
+model AdminUser {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Employees added by the admin. They never see Medefis credentials.
+model Employee {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  displayName  String
+  email        String?
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  activity     ActivityLog[]
+}
+
+/// Parent-system session tokens (admin or employee).
+/// userId is a plain string (no FK) because it may reference either an
+/// AdminUser or an Employee depending on `role`.
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  role      String   // "admin" | "employee"
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([token])
+  @@index([userId])
+}
+
+/// Encrypted Medefis credentials (single record, owned by admin).
+model MedefisCredential {
+  id             String   @id @default(cuid())
+  username       String   @unique
+  // AES-256-GCM encrypted blob (base64) containing the password.
+  passwordCipher String
+  // Encrypted blob containing username too (for re-login), base64.
+  usernameCipher String
+  lastVerifiedAt DateTime?
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+/// Captured Medefis session cookies (single active record).
+model MedefisSession {
+  id           String   @id @default(cuid())
+  // JSON array of {name, value, domain, path} cookies, encrypted at rest.
+  cookiesBlob  String
+  // Base URL of the Medefis application after login redirect.
+  appBaseUrl   String
+  // Whether the session is currently considered valid.
+  valid        Boolean  @default(true)
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Audit trail of actions taken in the parent system.
+model ActivityLog {
+  id        String   @id @default(cuid())
+  employeeId String?
+  employee  Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  actor     String   // "admin" | employee username
+  role      String   // "admin" | "employee"
+  action    String
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actor])
+}
