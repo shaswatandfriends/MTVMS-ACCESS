@@ -61,17 +61,27 @@ export async function adminLogin(username: string, password: string) {
   })
 }
 
-export async function employeeLogin(username: string, password: string) {
+export async function employeeLogin(
+  username: string,
+  password: string,
+): Promise<{ token: string } | { error: string }> {
   const emp = await db.employee.findUnique({ where: { username } })
-  if (!emp) return null
-  if (!emp.active) return null
-  if (!verifyPassword(password, emp.passwordHash)) return null
-  return createUserSession({
+  if (!emp) {
+    return { error: 'Invalid username or password.' }
+  }
+  if (!emp.active) {
+    return { error: 'Your account is inactive. Contact your administrator.' }
+  }
+  if (!verifyPassword(password, emp.passwordHash)) {
+    return { error: 'Invalid username or password.' }
+  }
+  const token = await createUserSession({
     id: emp.id,
     role: 'employee',
     username: emp.username,
     displayName: emp.displayName,
   })
+  return { token }
 }
 
 async function createUserSession(user: AuthUser): Promise<string> {

@@ -57,19 +57,21 @@ export function CredentialsPanel() {
     load()
   }, [load])
 
-  async function medefisLogin(signin?: string) {
+  async function medefisLogin() {
     setBusy('login')
     try {
-      const res = await fetch('/api/medefis/login', {
+      const res = await fetch('/api/medefis/headless/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ signin }),
+        body: JSON.stringify({}),
       })
       const data = await res.json()
       if (data.ok) {
-        toast.success(`Signed in to Medefis. App: ${data.appBaseUrl}`)
+        toast.success(`Automated login succeeded. App: ${data.appBaseUrl}`)
+      } else if (data.needManual) {
+        toast.info('MFA or captcha detected — scroll down to the live view to complete login.')
       } else {
-        toast.error(data.error || 'Medefis login failed. Try manual cookie paste.')
+        toast.error(data.error || 'Medefis login failed.')
       }
       await load()
     } finally {
@@ -170,7 +172,7 @@ export function CredentialsPanel() {
               ) : (
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
               )}
-              Re-establish session
+              Re-login via browser
             </Button>
             {status?.valid && (
               <Button
@@ -234,20 +236,6 @@ export function CredentialsPanel() {
               setBusy={setBusy}
               onSaved={load}
             />
-
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => medefisLogin()}
-              disabled={!!busy || !status?.hasCredentials}
-            >
-              {busy === 'login' ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <LogIn className="mr-2 h-4 w-4" />
-              )}
-              Sign in to Medefis now
-            </Button>
 
             {storedUsername && (
               <>

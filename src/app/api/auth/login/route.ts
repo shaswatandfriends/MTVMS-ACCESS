@@ -22,11 +22,11 @@ export async function POST(req: Request) {
     }
     token = t
   } else {
-    const t = await employeeLogin(username, password)
-    if (!t) {
-      return NextResponse.json({ error: 'Invalid employee credentials or account inactive.' }, { status: 401 })
+    const result = await employeeLogin(username, password)
+    if ('error' in result) {
+      return NextResponse.json({ error: result.error }, { status: 401 })
     }
-    token = t
+    token = result.token
   }
 
   await setSessionCookie(token)

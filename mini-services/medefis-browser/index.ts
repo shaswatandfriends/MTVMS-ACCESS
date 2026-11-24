@@ -269,15 +269,40 @@ const server = Bun.serve({
         await p.waitForLoadState('networkidle').catch(() => {})
         let currentUrl = p.url()
 
-        // 2. If already on the app (persistent session), just extract.
+        // 2. The SPA at vms.medefis5.com may do a CLIENT-SIDE redirect to the
+        // SSO login page (identity.medefis5.com). Wait up to 10s for that
+        // redirect, or for an OIDC token if already logged in.
         if (isAppUrl(currentUrl)) {
-          await waitForOidcToken(p)
-          const session = await extractSession(p, context!)
-          return json({ ok: true, ...session })
+          for (let i = 0; i < 20; i++) {
+            await p.waitForTimeout(500)
+            currentUrl = p.url()
+            if (isIdentityUrl(currentUrl)) break
+            const hasToken = await p
+              .evaluate(() => Object.keys(sessionStorage).some((k) => k.startsWith('oidc.user')))
+              .catch(() => false)
+            if (hasToken) break
+          }
         }
 
-        // 3. If on the identity login page, auto-fill credentials.
-        if (isIdentityUrl(currentUrl) || (await p.locator('input[type="password"]').first().isVisible().catch(() => false))) {
+        // 3. If already on the app WITH a valid token, extract.
+        if (isAppUrl(currentUrl) && !isIdentityUrl(currentUrl)) {
+          const gotToken = await waitForOidcToken(p, 3000)
+          if (gotToken) {
+            const session = await extractSession(p, context!)
+            return json({ ok: true, ...session })
+          }
+          // On the app host but no token → probably an Incapsula block page or
+          // the SPA didn't redirect. Fall through to manual.
+          return json({
+            ok: false,
+            needManual: true,
+            reason: 'The Medefis app page loaded but no login token appeared. This may be an Incapsula block page — try completing it in the live view, or check the entry URL.',
+            url: currentUrl,
+          })
+        }
+
+        // 4. On the identity login page → wait for the JS-rendered form, then fill.
+        if (isIdentityUrl(currentUrl)) {
           if (!username || !password) {
             return json({
               ok: false,
@@ -286,12 +311,32 @@ const server = Bun.serve({
               url: currentUrl,
             })
           }
+          // The SSO form is rendered by JavaScript; wait for it to appear.
+          try {
+            await p.waitForSelector('input[type="password"]', { timeout: 15000 })
+          } catch {
+            return json({
+              ok: false,
+              needManual: true,
+              reason: 'The SSO login form did not appear in time. Complete it in the live view.',
+              url: currentUrl,
+            })
+          }
+          // Also wait for a username field to be present.
+          try {
+            await p.waitForSelector(
+              'input[name="username"], input[name="UserName"], input[type="email"], input[type="text"]',
+              { timeout: 5000 },
+            )
+          } catch {
+            /* proceed anyway */
+          }
           const filled = await autoFillLogin(p, username, password)
           if (!filled) {
             return json({
               ok: false,
               needManual: true,
-              reason: 'Could not detect the login form automatically.',
+              reason: 'Could not detect the login form fields. Complete it in the live view.',
               url: currentUrl,
             })
           }
@@ -302,18 +347,26 @@ const server = Bun.serve({
           currentUrl = p.url()
         }
 
-        // 4. Did we land on the app?
+        // 5. Did we land on the app after login?
         if (isAppUrl(currentUrl)) {
-          await waitForOidcToken(p)
+          const gotToken = await waitForOidcToken(p, 20000)
+          if (!gotToken) {
+            return json({
+              ok: false,
+              needManual: true,
+              reason: 'Login submitted but the Medefis app did not establish a session. There may be MFA or an error — check the live view.',
+              url: currentUrl,
+            })
+          }
           const session = await extractSession(p, context!)
           return json({ ok: true, ...session })
         }
 
-        // 5. Still on identity / somewhere unexpected → likely MFA/captcha.
+        // 6. Still on identity / somewhere unexpected → likely MFA/captcha.
         return json({
           ok: false,
           needManual: true,
-          reason: 'Login did not reach the Medefis app — MFA, captcha, or error page may be showing.',
+          reason: 'Login did not reach the Medefis app — MFA, captcha, or error page may be showing. Complete it in the live view.',
           url: currentUrl,
         })
       }

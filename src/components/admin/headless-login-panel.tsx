@@ -43,16 +43,21 @@ export function HeadlessLoginPanel({
   const [manualText, setManualText] = useState('')
   const [shotLoading, setShotLoading] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
+  const liveViewRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refreshShot = useCallback(() => {
     setShotKey((k) => k + 1)
   }, [])
 
-  // Poll screenshots while in manual mode.
+  // Poll screenshots while in manual mode + scroll the live view into view.
   useEffect(() => {
     if (phase === 'need-manual') {
       refreshShot()
+      // Bring the live view into view so the admin sees it immediately.
+      setTimeout(() => {
+        liveViewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
       pollRef.current = setInterval(refreshShot, 2000)
       return () => {
         if (pollRef.current) clearInterval(pollRef.current)
@@ -219,7 +224,7 @@ export function HeadlessLoginPanel({
         )}
 
         {phase === 'need-manual' && (
-          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div ref={liveViewRef} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm text-slate-700">
                 <AlertCircle className="h-4 w-4 text-amber-500" />
