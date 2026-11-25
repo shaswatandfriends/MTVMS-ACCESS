@@ -3,7 +3,7 @@ import { getCurrentUser, getClientIp } from '@/lib/auth'
 import { saveManualCookies, logActivity } from '@/lib/medefis'
 
 export const dynamic = 'force-dynamic'
-const MB = 'http://localhost:3003'
+const MB = process.env.MEDEFIS_BROWSER_URL || 'http://localhost:3003'
 
 /**
  * GET /api/medefis/headless/extract

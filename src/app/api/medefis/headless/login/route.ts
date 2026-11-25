@@ -4,7 +4,7 @@ import { getStoredCredentials, saveManualCookies, logActivity, setCredentialErro
 
 export const dynamic = 'force-dynamic'
 
-const MB = 'http://localhost:3003'
+const MB = process.env.MEDEFIS_BROWSER_URL || 'http://localhost:3003'
 
 /**
  * POST /api/medefis/headless/login

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
-const MB = 'http://localhost:3003'
+const MB = process.env.MEDEFIS_BROWSER_URL || 'http://localhost:3003'
 
 /** POST /api/medefis/headless/press { key } -> press a key in the headless browser */
 export async function POST(req: Request) {

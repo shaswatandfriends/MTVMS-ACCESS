@@ -52,3 +52,13 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Mini-service artifacts
+mini-services/*/node_modules/
+mini-services/*/browser-data/
+mini-services/*.log
+
+# Local dev artifacts
+/download/
+/upload/
+/scripts/

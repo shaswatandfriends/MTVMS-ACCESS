@@ -29,7 +29,7 @@ import { chromium, type BrowserContext, type Page } from 'playwright'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 
-const PORT = 3003
+const PORT = Number(process.env.PORT) || 3003
 const USER_DATA_DIR = join(import.meta.dir, 'browser-data')
 const APP_HOSTS = ['vms.medefis5.com', 'medefis5.com', 'vendor.medefis5.com']
 const IDENTITY_HOST = 'identity.medefis5.com'
